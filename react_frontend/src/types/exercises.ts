@@ -14,6 +14,7 @@ export interface ExerciseData {
   tags: string[];
   worlds: object[];
   entrypoints: string[];
+  session: string;
 }
 
 export type ExerciseStatus = "ACTIVE" | "INACTIVE" | "PROTOTYPE";

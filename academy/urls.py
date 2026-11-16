@@ -22,6 +22,7 @@ from . import views
 academy_urls = [
     path("enter_exercise/", views.enter_exercise, name="enter_exercise"),
     path("exit_exercise/", views.exit_exercise, name="exit_exercise"),
+    path("exercise_heartbeat/", views.exercise_heartbeat, name="exercise_heartbeat"),
     path("get_exercise_list/", views.get_exercise_list, name="get_exercise_list"),
     path(
         "get_helper_file_list/", views.get_helper_file_list, name="get_helper_file_list"

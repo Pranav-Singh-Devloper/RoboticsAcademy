@@ -9,6 +9,7 @@ import base64
 import os
 import shutil
 import tempfile
+import time
 
 from django.test import TestCase
 from django.urls import reverse
@@ -245,7 +246,7 @@ class EnterExerciseViewTests(TestCase):
     def tearDown(self):
         from academy import views
 
-        views.active_project = None
+        views.active_session = None
 
     def test_missing_project_id_returns_400(self):
         response = self.client.get("/academy/enter_exercise/")
@@ -262,7 +263,11 @@ class EnterExerciseViewTests(TestCase):
         from academy import views
 
         _make_exercise("test_enter", "Test Enter")
-        views.active_project = "other_exercise"
+        views.active_session = {
+            "project": "other_exercise",
+            "id": "other",
+            "last_seen": time.monotonic(),
+        }
         response = self.client.get(
             "/academy/enter_exercise/", {"project_id": "test_enter"}
         )
@@ -290,6 +295,103 @@ class EnterExerciseViewTests(TestCase):
         finally:
             error_handler.local_fal = orig
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+class ExerciseSessionTests(TestCase):
+    """Tests for the open exercise lock: enter, heartbeat and exit."""
+
+    def setUp(self):
+        from academy import error_handler
+        from academy.file_access import FAL_RA
+
+        self.tmp = tempfile.mkdtemp()
+        self.orig_fal = error_handler.local_fal
+        error_handler.local_fal = FAL_RA(self.tmp, os.path.join(self.tmp, "exercises"))
+        _make_exercise("test_session", "Test Session")
+
+    def tearDown(self):
+        from academy import error_handler, views
+
+        views.active_session = None
+        error_handler.local_fal = self.orig_fal
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def enter(self):
+        return self.client.get(
+            "/academy/enter_exercise/", {"project_id": "test_session"}
+        )
+
+    def heartbeat(self, session):
+        return self.client.post(
+            "/academy/exercise_heartbeat/",
+            {"session": session},
+            content_type="application/json",
+        )
+
+    def exit(self, session):
+        return self.client.post(
+            "/academy/exit_exercise/",
+            {"session": session},
+            content_type="application/json",
+        )
+
+    def age_session(self, seconds):
+        from academy import views
+
+        views.active_session["last_seen"] -= seconds
+
+    def test_enter_returns_session(self):
+        response = self.enter()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["session"])
+
+    def test_second_enter_while_open_returns_409(self):
+        self.enter()
+        self.assertEqual(self.enter().status_code, 409)
+
+    def test_session_without_heartbeat_is_released(self):
+        from academy import views
+
+        self.enter()
+        self.age_session(views.SESSION_TIMEOUT + 1)
+        self.assertEqual(self.enter().status_code, 200)
+
+    def test_heartbeat_keeps_session_open(self):
+        from academy import views
+
+        session = self.enter().json()["session"]
+        self.age_session(views.SESSION_TIMEOUT - 1)
+        self.assertTrue(self.heartbeat(session).json()["success"])
+        self.age_session(views.SESSION_TIMEOUT - 1)
+        self.assertEqual(self.enter().status_code, 409)
+
+    def test_heartbeat_from_old_session_is_ignored(self):
+        from academy import views
+
+        old = self.enter().json()["session"]
+        self.age_session(views.SESSION_TIMEOUT + 1)
+        new = self.enter().json()["session"]
+        self.assertFalse(self.heartbeat(old).json()["success"])
+        self.assertEqual(views.active_session["id"], new)
+
+    def test_exit_releases_session(self):
+        session = self.enter().json()["session"]
+        self.assertEqual(self.exit(session).status_code, 200)
+        self.assertEqual(self.enter().status_code, 200)
+
+    def test_exit_from_old_session_keeps_new_one_open(self):
+        from academy import views
+
+        old = self.enter().json()["session"]
+        self.age_session(views.SESSION_TIMEOUT + 1)
+        self.enter()
+        self.exit(old)
+        self.assertEqual(self.enter().status_code, 409)
+
+    def test_exit_without_session_returns_400(self):
+        self.enter()
+        response = self.client.post("/academy/exit_exercise/")
+        self.assertEqual(response.status_code, 400)
 
 
 class FileManagementViewTests(TestCase):

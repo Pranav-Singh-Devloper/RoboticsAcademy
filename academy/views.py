@@ -8,6 +8,8 @@ import ast
 from django.http import JsonResponse
 import subprocess
 import sys
+import time
+import uuid
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.decorators import api_view
 
@@ -72,7 +74,19 @@ def save_world_db(request):
     return Response({"success": True})
 
 
-active_project = None
+# The open exercise, shared by all tabs. The open tab sends a heartbeat every
+# few seconds, so a session that stops sending them (browser crash, force quit)
+# is released after SESSION_TIMEOUT seconds instead of blocking every exercise.
+# Browsers can slow timers in background tabs to once per minute, hence 90s.
+SESSION_TIMEOUT = 90
+active_session = None
+
+
+def session_is_alive():
+    return (
+        active_session is not None
+        and time.monotonic() - active_session["last_seen"] < SESSION_TIMEOUT
+    )
 
 
 @error_wrapper("GET", ["project_id"])
@@ -109,11 +123,15 @@ def enter_exercise(fal, request):
     }
 
     # FIX:https://github.com/JdeRobot/RoboticsAcademy/issues/3510
-    global active_project
-    if active_project is None:
-        active_project = project_id
-    else:
-        raise ExerciseAlreadyOpen(active_project)
+    global active_session
+    if session_is_alive():
+        raise ExerciseAlreadyOpen(active_session["project"])
+    session_id = uuid.uuid4().hex
+    active_session = {
+        "project": project_id,
+        "id": session_id,
+        "last_seen": time.monotonic(),
+    }
 
     # Create filesystem base
     path = fal.exercise_path(project_id)
@@ -127,19 +145,32 @@ def enter_exercise(fal, request):
                 file_path = fal.path_join(path, "academy.cpp")
                 fal.create(file_path, "")
 
-    return JsonResponse({"success": True, "info": info})
+    return JsonResponse({"success": True, "info": info, "session": session_id})
 
 
-@error_wrapper("POST")
+@error_wrapper("POST", ["session"])
+def exercise_heartbeat(fal, request):
+    """
+    Keep the open exercise session alive
+    """
+    if active_session is None or active_session["id"] != request.data["session"]:
+        return JsonResponse({"success": False})
+
+    active_session["last_seen"] = time.monotonic()
+    return JsonResponse({"success": True})
+
+
+@error_wrapper("POST", ["session"])
 def exit_exercise(fal, request):
     """
-    Exit exercise
+    Exit exercise. Only the session that opened it can close it.
     """
 
     print("Exit exercise")
 
-    global active_project
-    active_project = None
+    global active_session
+    if active_session is not None and active_session["id"] == request.data["session"]:
+        active_session = None
 
     return JsonResponse({"success": True})
 

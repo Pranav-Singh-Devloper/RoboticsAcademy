@@ -28,6 +28,7 @@ const getProjectData = async (
     const response = await axios.get(apiUrl);
     const data = response.data.info;
     data["exercise_id"] = projectId;
+    data["session"] = response.data.session;
 
     return data;
   } catch (e: unknown) {
@@ -36,7 +37,7 @@ const getProjectData = async (
   }
 };
 
-const exitProject = async () => {
+const exitProject = async (session: string) => {
   const apiUrl = `/academy/exit_exercise/`;
 
   // Define headers for source validation
@@ -48,6 +49,7 @@ const exitProject = async () => {
   fetch(apiUrl, {
     method: "POST",
     headers: headers,
+    body: JSON.stringify({ session: session }),
     keepalive: true, // Critical for reliability during unload
   }).catch((error) => console.error("Beacon failed:", error));
 
@@ -62,6 +64,17 @@ const exitProject = async () => {
   //   const error = e as ApiError;
   //   throw Error(error.response?.data.message, { cause: e });
   // }
+};
+
+// Tells the server this tab still has the exercise open
+const sendHeartbeat = async (session: string) => {
+  const apiUrl = "/academy/exercise_heartbeat/";
+
+  try {
+    await axios.post(apiUrl, { session: session }, axiosExtra());
+  } catch (e: unknown) {
+    console.error("Heartbeat failed:", (e as Error).message);
+  }
 };
 
 const getExerciseList = async (): Promise<Exercise[]> => {
@@ -464,6 +477,7 @@ const deleteFolder = async (projectId: string, path: string, user?: string) => {
 
 export {
   getProjectData,
+  sendHeartbeat,
   getHelperFileList,
   getHelperFile,
   getExerciseList,

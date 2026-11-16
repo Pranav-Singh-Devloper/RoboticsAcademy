@@ -4,7 +4,7 @@ import axios from "axios";
 import { lazy, Suspense } from "react";
 import WebGUIPreview from "Components/visualizers/WebGUIPreview";
 import ExerciseContainer from "Components/layouts/ExerciseContainer";
-import { exitProject, getProjectData } from "Api";
+import { exitProject, getProjectData, sendHeartbeat } from "Api";
 import WebGUILoading from "Components/visualizers/WebGUILoading";
 import { ExerciseData } from "Types/exercises";
 import { useAcademyTheme } from "Contexts/AcademyThemeContext";
@@ -13,6 +13,9 @@ import {
   StyledErrorContainer,
   StyledErrorMessage,
 } from "Styles/pages/Project.styles";
+
+// Must stay well below SESSION_TIMEOUT in academy/views.py
+const HEARTBEAT_INTERVAL = 15000;
 
 export const loader = async ({
   params,
@@ -37,16 +40,21 @@ const Exercise = () => {
 
   useEffect(() => {
     const handleUnload = () => {
-      exitProject();
+      exitProject(data.session);
     };
 
     window.addEventListener("pagehide", handleUnload);
+    const heartbeat = window.setInterval(
+      () => sendHeartbeat(data.session),
+      HEARTBEAT_INTERVAL,
+    );
 
     return () => {
       window.removeEventListener("pagehide", handleUnload);
+      window.clearInterval(heartbeat);
       // This is to fix this: fires twice thanks to react Strict mode
       if (hasRender.current || process.env.NODE_ENV !== "development") {
-        exitProject();
+        exitProject(data.session);
       }
       hasRender.current = true;
     };
@@ -92,6 +100,9 @@ export const ErrorBoundary = () => {
           <StyledErrorMessage color={theme.palette.error}>
             Close the other instance or exit the exercise and refresh the page
             to continue
+          </StyledErrorMessage>
+          <StyledErrorMessage color={theme.palette.error}>
+            If it was closed unexpectedly, wait 90 seconds and refresh the page
           </StyledErrorMessage>
         </StyledErrorContainer>
       </>
